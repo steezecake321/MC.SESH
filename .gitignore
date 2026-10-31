@@ -1,0 +1,9 @@
+dist/
+backups/
+build/
+data/
+*.log
+*.token
+session.key
+config.json
+.claude/

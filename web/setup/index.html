@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>MC.SESH Setup</title>
+<link rel="icon" href="favicon-32.png">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<div class="wiz">
+  <aside class="side">
+    <img class="logo" src="logo.png" alt="MC.SESH">
+    <div id="steps"></div>
+    <div class="grow"></div>
+    <div class="music">
+      <div class="now" id="now">&#9835; Music is off</div>
+      <div class="row"><button class="alt" id="musicBtn" style="padding:6px 12px;font-size:13px">Play music</button><input id="vol" type="range" min="0" max="1" step="0.01" value="0.85" aria-label="Volume"></div>
+    </div>
+  </aside>
+  <section class="main">
+    <div class="page" id="page"></div>
+    <div class="foot"><button class="alt" id="back">Back</button><span class="dim" id="hint"></span><button id="next">Next</button></div>
+  </section>
+</div>
+<script src="music.js"></script>
+<script src="setup.js"></script>
+</body>
+</html>
