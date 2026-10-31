@@ -158,7 +158,8 @@ final class Installer {
                 case "forge" -> forge.containsKey(id);
                 default -> neo.containsKey(id);
             };
-            if (ok && release && isOlderThan(id, "1.14")) continue;
+            // Mojang published no server download before 1.2.5; Forge installers are only supported from 1.7.10 on; Fabric and NeoForge start later anyway
+            if (ok && release && isOlderThan(id, type.equals("vanilla") ? "1.2.5" : type.equals("forge") ? "1.7.10" : "1.14")) continue;
             if (ok) out.add(Json.map("id", id, "type", release ? "release" : "snapshot"));
         }
         String lat = latest;
@@ -215,6 +216,18 @@ final class Installer {
         Map<String, Object> v = mojangVersion(mc);
         int req = Json.num(v.get("javaVersion"), "majorVersion", 8);
         return Json.map("required", req, "installed", Runtime.version().feature(), "hasServer", Json.obj(Json.obj(v.get("downloads")).get("server")).get("url") != null);
+    }
+
+    /** The same, plus whether a Java that can actually run this server type (old Forge needs exactly Java 8) exists on this PC. */
+    static Map<String, Object> javaInfo(String mc, String type) throws IOException {
+        Map<String, Object> m = new LinkedHashMap<>(javaInfo(mc));
+        String t = type == null || type.isBlank() ? "vanilla" : type;
+        String path = JavaRuntimes.javaForMc(t, mc);
+        boolean found = path != null;
+        m.put("serverJavaFound", found);
+        if (found) for (Map<String, Object> r : JavaRuntimes.detect(false)) if (path.equals(r.get("path"))) m.put("serverJavaMajor", r.get("major"));
+        if (!found) m.put("message", JavaRuntimes.missingJavaMessage(t, mc));
+        return m;
     }
 
     /** Downloads the official vanilla server jar for a Minecraft version. */
@@ -430,6 +443,7 @@ final class Installer {
         if (Json.num(jv, "required", 8) > Runtime.version().feature())
             throw new Api(400, "Minecraft " + mc + " needs Java " + jv.get("required") + " but this PC only has Java " + Runtime.version().feature());
         if (!Boolean.TRUE.equals(jv.get("hasServer"))) throw new Api(400, "Mojang published no server download for Minecraft " + mc);
+        if (JavaRuntimes.javaForMc(type, mc) == null) throw new Api(400, JavaRuntimes.missingJavaMessage(type, mc));
     }
 
     static String install(Job j, Map<String, Object> req) throws Exception {
@@ -544,9 +558,22 @@ final class Installer {
         if (!Files.exists(jar)) download(url, jar, mavenSha1(url), j);
         j.checkCancel();
         j.log("Running the " + (forge ? "Forge" : "NeoForge") + " installer (this downloads libraries and can take a few minutes)...");
+        // old Forge installers (and the servers they make) only work on Java 8, so run them with the same Java the server will use
+        if (forge && JavaRuntimes.maxFor("forge", mc) < Integer.MAX_VALUE) {
+            String old = JavaRuntimes.javaForMc("forge", mc);
+            if (old != null) java = old;
+        }
         runInstaller(j, dir, java, "-jar", jar.toString(), "--installServer");
         String args = findWinArgs(dir);
-        if (args == null) throw new Api(500, "The installer finished but no launch arguments were found (see the log above)");
+        if (args == null) {
+            // Forge before 1.17 has no argument files: the installer leaves a launch jar in the folder and the server starts with java -jar
+            String legacy = forge ? findLegacyForgeJar(dir, mc, loader) : null;
+            if (legacy != null) {
+                j.log("Forge " + loader + " starts from " + legacy + " (the way Forge for Minecraft " + mc + " works).");
+                return "\"%MCM_JAVA%\" " + jvm + " -XX:+UseG1GC -jar \"" + legacy + "\" nogui";
+            }
+            throw new Api(500, "The installer finished but no launch arguments or launch jar were found (see the log above)");
+        }
         Files.writeString(dir.resolve("user_jvm_args.txt"), jvm + "\r\n-XX:+UseG1GC\r\n", StandardCharsets.ISO_8859_1);
         return "\"%MCM_JAVA%\" @user_jvm_args.txt @" + args + " nogui";
     }
@@ -570,6 +597,17 @@ final class Installer {
         int code = p.waitFor();
         killer.interrupt();
         if (code != 0) throw new Api(500, "The installer failed (exit code " + code + "); see the output above");
+    }
+
+    /** The jar Forge before 1.17 starts from, in the server folder: forge-MC-BUILD.jar, or forge-MC-BUILD-MC-universal.jar for the oldest builds. */
+    static String findLegacyForgeJar(Path dir, String mc, String loader) throws IOException {
+        List<String> names;
+        try (Stream<Path> w = Files.list(dir)) { names = w.filter(Files::isRegularFile).map(p -> p.getFileName().toString()).toList(); }
+        String exact = "forge-" + mc + "-" + loader + ".jar";
+        if (names.contains(exact)) return exact;
+        for (String n : names) if (n.startsWith("forge-") && n.endsWith("-universal.jar")) return n;
+        for (String n : names) if (n.startsWith("forge-") && n.endsWith(".jar") && !n.contains("installer")) return n;
+        return null;
     }
 
     static String findWinArgs(Path dir) throws IOException {

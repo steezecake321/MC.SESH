@@ -477,8 +477,64 @@ final class Srv {
             ProcessBuilder pb = new ProcessBuilder("cmd.exe", "/c", dir.resolve(script()).toString()).directory(dir.toFile()).redirectErrorStream(true)
                     .redirectOutput(Main.DATA.resolve("launch-" + id + ".log").toFile()).redirectInput(ProcessBuilder.Redirect.from(new File("NUL")));
             pb.environment().put("MCM_JAVA", JavaRuntimes.javaFor(this));
-            pb.start();
+            launchedProc = pb.start();
         }
+    }
+
+    /** The start script's process, kept so a server that dies before it opens its port can still be found and ended (it has no listening port to look up). */
+    private volatile Process launchedProc;
+
+    /** Ends the start script and everything it started. Returns true when something was running. */
+    private boolean killLaunched(Job j) {
+        Process p = launchedProc;
+        if (p == null || !p.isAlive()) return false;
+        if (j != null) j.log("Ending the process that was started (it never opened its port).");
+        Sys.run(15000, "taskkill", "/PID", Long.toString(p.pid()), "/F", "/T");
+        return true;
+    }
+
+    private static final String[] FATAL_LINES = {"Failed to start the minecraft server", "Encountered an unexpected exception", "Crash report saved to", "This crash report has been saved to",
+            "Could not find or load main class", "UnsupportedClassVersionError", "Unable to access jarfile", "Error occurred during initialization of VM", "java.lang.OutOfMemoryError"};
+
+    private static List<String> logTail(Path p, long since) {
+        try {
+            if (!Files.isRegularFile(p) || Files.getLastModifiedTime(p).toMillis() < since - 2000) return List.of();
+            long len = Files.size(p), from = Math.max(0, len - 65536);
+            try (RandomAccessFile f = new RandomAccessFile(p.toFile(), "r")) {
+                f.seek(from);
+                byte[] b = new byte[(int) (len - from)];
+                f.readFully(b);
+                return Arrays.asList(new String(b, StandardCharsets.UTF_8).split("\\R"));
+            }
+        } catch (IOException e) {
+            return List.of();
+        }
+    }
+
+    /** Why a start went wrong, read from the server's own logs (a fatal line and the exception under it), or from the last lines when the process already ended. Null when nothing looks wrong. */
+    private String startupFailure(long since, boolean exited) {
+        String lastLines = null;
+        for (Path p : new Path[]{dir.resolve("logs").resolve("latest.log"), Main.DATA.resolve("launch-" + id + ".log")}) {
+            List<String> lines = logTail(p, since);
+            for (int i = 0; i < lines.size(); i++) {
+                String l = lines.get(i);
+                for (String mark : FATAL_LINES) {
+                    if (!l.contains(mark)) continue;
+                    StringBuilder sb = new StringBuilder(l.replaceFirst("^\\[[^\\]]*\\]\\s*(\\[[^\\]]*\\]:?\\s*)?", "").trim());
+                    for (int k = i + 1; k < lines.size() && k <= i + 4; k++) {
+                        String n = lines.get(k).trim();
+                        if (n.isEmpty() || n.startsWith("at ")) continue;
+                        sb.append(" / ").append(n.length() > 160 ? n.substring(0, 160) : n);
+                    }
+                    return sb.length() > 420 ? sb.substring(0, 420) : sb.toString();
+                }
+            }
+            if (lastLines == null && exited && !lines.isEmpty()) {
+                List<String> keep = lines.stream().filter(s -> !s.isBlank()).toList();
+                lastLines = String.join(" / ", keep.subList(Math.max(0, keep.size() - 4), keep.size()));
+            }
+        }
+        return lastLines;
     }
 
     void start(Job j) throws Exception {
@@ -508,6 +564,7 @@ final class Srv {
         String bedrockNote = Geyser.prepareBedrockPort(this);
         if (bedrockNote != null) j.log(bedrockNote);
         launch();
+        long began = launchedAt;
         long deadline = System.currentTimeMillis() + 300_000;
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -515,6 +572,15 @@ final class Srv {
             } catch (Job.Cancelled c) {
                 j.log("Stopped waiting (the server is still launching in the background).");
                 throw c;
+            }
+            if (!running(true)) {
+                boolean exited = launchedProc != null && !launchedProc.isAlive() && task.isEmpty();
+                String why = System.currentTimeMillis() - began > 4000 ? startupFailure(began, exited) : null;
+                if (why != null) {
+                    killLaunched(j);
+                    launchedAt = 0;
+                    throw new Api(500, name + " stopped by itself while starting: " + why + " (full log: logs\\latest.log in " + dir + ")");
+                }
             }
             if (Files.exists(upd) && Files.size(upd) > updPos) {
                 try (RandomAccessFile f = new RandomAccessFile(upd.toFile(), "r")) {
@@ -657,6 +723,8 @@ final class Srv {
             Sys.Result r = Sys.run(15000, "taskkill", "/PID", pid.toString(), "/F", "/T");
             j.log(r.out().trim());
             if (r.out().toLowerCase().contains("access is denied")) endLegacyTasks(j);
+        } else if (killLaunched(j)) {
+            Thread.sleep(1500);
         }
         for (int i = 0; i < 20; i++) {
             Thread.sleep(750);

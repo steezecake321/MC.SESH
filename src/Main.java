@@ -1056,7 +1056,7 @@ public final class Main {
         switch (rest) {
             case "versions" -> sendJson(ex, 200, Installer.versions(qs.getOrDefault("type", ""), "1".equals(qs.get("snapshots"))));
             case "loaders" -> sendJson(ex, 200, Json.map("loaders", Installer.loaders(qs.getOrDefault("type", ""), qs.get("mc"))));
-            case "java" -> sendJson(ex, 200, Installer.javaInfo(qs.get("mc")));
+            case "java" -> sendJson(ex, 200, Installer.javaInfo(qs.get("mc"), qs.get("type")));
             case "biomes" -> sendJson(ex, 200, Json.map("supported", Installer.singleBiomeSupported(qs.get("mc")), "from", Installer.SINGLE_BIOME_FROM, "biomes", Installer.biomes(qs.get("mc"))));
             case "defaults" -> sendJson(ex, 200, Installer.defaults());
             case "geyser" -> sendJson(ex, 200, Geyser.availability(qs.getOrDefault("type", ""), qs.get("mc")));
@@ -1194,6 +1194,12 @@ public final class Main {
             }
             case "kill" -> {
                 requirePost(method);
+                // a start that is still waiting for the port (or a stuck stop) must not block the emergency button: cancel it first
+                Job busy = s.job;
+                if (busy != null && busy.active() && (busy.title.startsWith("Start") || busy.title.startsWith("Restart") || busy.title.startsWith("Stop"))) {
+                    busy.cancel = true;
+                    for (int i = 0; i < 24 && busy.active(); i++) Thread.sleep(250);
+                }
                 sendJson(ex, 200, Json.map("job", submit(s, "Force kill", s::kill).id));
             }
             case "job/cancel" -> {

@@ -43,7 +43,8 @@ final class JavaRuntimes {
                 int major = majorOf(c);
                 if (major <= 0) continue;
                 boolean bundled = c.startsWith(Main.RUNTIME);
-                found.put(key, Json.map("path", c.toString(), "major", major, "label", "Java " + major + (bundled ? " (bundled)" : "") + " - " + c.getParent().getParent().getFileName()));
+                boolean x64 = is64Bit(c);
+                found.put(key, Json.map("path", c.toString(), "major", major, "x64", x64, "label", "Java " + major + (x64 ? "" : " (32-bit)") + (bundled ? " (bundled)" : "") + " - " + c.getParent().getParent().getFileName()));
             } catch (IOException | RuntimeException ignored) { }
         }
         List<Map<String, Object>> out = new ArrayList<>(found.values());
@@ -73,6 +74,18 @@ final class JavaRuntimes {
         return m.find() ? parseMajor(m.group(1)) : 0;
     }
 
+    /** A 32-bit Java cannot give a Minecraft server more than about 1.5 GB, so it is not used for servers. Reads the release file, else asks java itself. */
+    private static boolean is64Bit(Path javaExe) {
+        Path rel = javaExe.getParent().getParent().resolve("release");
+        try {
+            if (Files.exists(rel)) {
+                Matcher m = Pattern.compile("OS_ARCH=\"([^\"]+)\"").matcher(Files.readString(rel, StandardCharsets.ISO_8859_1));
+                if (m.find()) return !m.group(1).equalsIgnoreCase("x86") && !m.group(1).equalsIgnoreCase("i586") && !m.group(1).equalsIgnoreCase("i386");
+            }
+        } catch (IOException ignored) { }
+        return Sys.run(8000, javaExe.toString(), "-version").out().contains("64-Bit");
+    }
+
     private static int parseMajor(String v) {
         try {
             if (v.startsWith("1.")) return Integer.parseInt(v.substring(2).replaceAll("\\D.*$", ""));
@@ -98,22 +111,46 @@ final class JavaRuntimes {
         return 8;
     }
 
-    /** The java.exe to use for a server: its explicit setting, else the best detected match, else whatever "java" resolves to. */
-    static String javaFor(Srv s) {
-        String explicit = Json.str(s.cfg, "java");
-        if (explicit != null && !explicit.isBlank() && Files.exists(Path.of(explicit))) return explicit;
-        int req = requiredFor(s.mcVersion());
-        List<Map<String, Object>> all = detect(false);
+    /** Newest Java major a server can run on: Forge before 1.17 breaks on anything newer than Java 8 (its launcher needs the old class loader). */
+    static int maxFor(String kind, String mc) {
+        if (!"forge".equals(kind) || mc == null) return Integer.MAX_VALUE;
+        Matcher m = Pattern.compile("^1\\.(\\d+)").matcher(mc);
+        return m.find() && Integer.parseInt(m.group(1)) < 17 ? 8 : Integer.MAX_VALUE;
+    }
+
+    /** The lowest detected Java that fits the version, or null when none does. */
+    static String javaForMc(String kind, String mc) {
+        int req = requiredFor(mc), max = maxFor(kind, mc);
         String best = null;
         int bestMajor = Integer.MAX_VALUE;
-        for (Map<String, Object> r : all) {
+        for (Map<String, Object> r : detect(false)) {
             int mj = (Integer) r.get("major");
-            if (mj >= req && mj < bestMajor) {
+            if (!Boolean.TRUE.equals(r.get("x64"))) continue;
+            if (mj >= req && mj <= max && mj < bestMajor) {
                 bestMajor = mj;
                 best = (String) r.get("path");
             }
         }
-        if (best == null && !all.isEmpty()) best = (String) all.get(0).get("path");
+        return best;
+    }
+
+    /** What to tell the person when a version needs a Java this PC does not have. */
+    static String missingJavaMessage(String kind, String mc) {
+        int req = requiredFor(mc), max = maxFor(kind, mc);
+        String need = (max == req ? "Java " + req : "Java " + req + " or newer") + " (64-bit)";
+        return "Minecraft " + mc + (kind.equals("vanilla") ? "" : " with " + kind) + " needs " + need + "." + (max != Integer.MAX_VALUE && max < 17 ? " Newer Java versions cannot run it, and" : " And") + " none was found on this PC. Install Eclipse Temurin " + req + " from adoptium.net (or start the CurseForge app once so it downloads its own), then try again. "
+                + "If it is installed somewhere unusual, set the server's Java under its Settings.";
+    }
+
+    /** The java.exe to use for a server: its explicit setting, else the best detected match, else whatever "java" resolves to. */
+    static String javaFor(Srv s) {
+        String explicit = Json.str(s.cfg, "java");
+        if (explicit != null && !explicit.isBlank() && Files.exists(Path.of(explicit))) return explicit;
+        String best = javaForMc(s.kind(), s.mcVersion());
+        if (best == null) {
+            List<Map<String, Object>> all = detect(false);
+            if (!all.isEmpty()) best = (String) all.get(0).get("path");
+        }
         return best != null ? best : "java";
     }
 }

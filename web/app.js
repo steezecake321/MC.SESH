@@ -565,12 +565,17 @@ async function addServerWizard(opts = {}) {
       } catch (e) { if (my === seq) { note.textContent = e.message; javaBlock = true; } }
     }
     try {
-      const j = await api('GET', `/api/install/java?mc=${encodeURIComponent(mcSel.value)}`);
+      const j = await api('GET', `/api/install/java?mc=${encodeURIComponent(mcSel.value)}&type=${type}`);
       if (my !== seq) return;
       if (!j.hasServer) { note.textContent = 'Mojang published no server download for this version.'; javaBlock = true; }
+      else if (j.serverJavaFound === false) { note.textContent = j.message; javaBlock = true; }
       else if (j.required > j.installed) { note.textContent = `This version needs Java ${j.required}; this PC only has Java ${j.installed}.`; javaBlock = true; }
-      else if (j.required < j.installed) note.textContent = `Built for Java ${j.required}; this PC runs Java ${j.installed}. Older versions can have problems on newer Java.`;
+      else if (j.required < j.installed) note.textContent = j.serverJavaMajor && j.serverJavaMajor < j.installed
+        ? `Built for Java ${j.required}. The manager found a Java ${j.serverJavaMajor} on this PC and will run this server on it.`
+        : `Built for Java ${j.required}; this PC runs Java ${j.installed}. Older versions can have problems on newer Java.`;
     } catch (e) { /* non-blocking */ }
+    if ((det || pk) && type !== 'vanilla' && preferMc && mcSel.value && mcSel.value !== preferMc && !javaBlock)
+      note.textContent = `This ${pk ? 'modpack' : 'world'} was made for Minecraft ${preferMc}. Its mods only exist for that version, so a different version starts without them` + (det ? ' and can damage modded blocks and items in the copy (your original is not touched).' : '.');
     sync();
     checkGeyser(my);
     checkJm(my);
