@@ -8,20 +8,20 @@
 
 MC.SESH is a small program with no dependencies to install. It brings its own Java.
 
-## What it does
+## What it does:
 
 - Create and manage local servers: **Vanilla, Fabric, Forge and NeoForge**
 - Add mods and modpacks from **Modrinth** and **CurseForge**
-- Back up, schedule and restore your servers
-- Keep Fabric servers, mods and Minecraft up to date
-- Let friends and family join on your home network, each with their own login and permission level
-- Let **Bedrock** players join your Java servers (Geyser and Floodgate)
-- Show your servers under **LAN worlds** in Minecraft, so players on your network find them without typing an address
+- Back up, schedule backups and restore your servers from backup.
+- Keep Fabric servers, mods and Minecraft up to date.
+- Let friends and family join on your home network, each with their own login and permission level.
+- Let **Bedrock** players join your Java servers (using Geyser and Floodgate)
+- Show your servers under **LAN worlds** in Minecraft, so players on your network find them in-game without typing an address.
 - A live **JourneyMap** tab: waypoints, teleporting and map settings
-- Automatic restarts by time or when a server is idle, with a countdown warning in chat
-- Players tab with quick commands, a console, log files, properties editor and more
-- Works from a phone and can be added to the home screen like an app
-- Bring in servers and single-player worlds you already have
+- Automatic restarts by time/day or when a server is idle. Gives a warning and countdown in chat.
+- Players tab with quick commands, a console and full quick commands list that has autocomplete and suggestions, log files with admin actions logged, a properties editor and more!
+- Works from a phone on the same wifi and can be added to the home screen like an app.
+- Bring in servers and single-player worlds you already have! Has a built-in scanner to find and list all instances and a file picker.
 
 ## Screenshots
 
