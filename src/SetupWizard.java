@@ -242,10 +242,32 @@ final class SetupWizard {
             if (near == null || !Files.isWritable(near)) return Json.map("ok", false, "message", "That place is not writable. Pick another folder (a folder on a drive you own, not Windows or Program Files).");
             var st = Files.getFileStore(near);
             boolean existing = Files.isRegularFile(p.resolve("data").resolve("config.json"));
-            return Json.map("ok", true, "root", p.getRoot().toString(), "freeGb", gb(st.getUsableSpace()), "existing", existing, "message", "");
+            Map<String, Object> out = Json.map("ok", true, "root", p.getRoot().toString(), "freeGb", gb(st.getUsableSpace()), "existing", existing, "message", "");
+            if (existing) out.put("prefill", prefill(p));
+            return out;
         } catch (Exception e) {
             return Json.map("ok", false, "message", "That is not a valid folder path.");
         }
+    }
+
+    /** What an existing install already uses, so an update offers those choices again instead of fresh guesses. The CurseForge key itself is never sent, only whether one is saved. */
+    private static Map<String, Object> prefill(Path inst) {
+        Map<String, Object> out = Json.map();
+        try {
+            Map<String, Object> c = Json.obj(Json.parse(Files.readString(inst.resolve("data").resolve("config.json"), StandardCharsets.UTF_8)));
+            Map<String, Object> paths = c.get("paths") instanceof Map ? Json.obj(c.get("paths")) : Json.map();
+            out.put("port", Json.num(c, "port", 0));
+            out.put("serversRoot", java.util.Objects.toString(Json.str(paths, "serversRoot"), ""));
+            out.put("backupsRoot", java.util.Objects.toString(Json.str(paths, "backupsRoot"), ""));
+            out.put("createDefaults", c.get("createDefaults") instanceof Map ? c.get("createDefaults") : Json.map());
+            out.put("hasCfKey", c.get("curseforge") instanceof Map<?, ?> cf && cf.get("apiKey") != null && !String.valueOf(cf.get("apiKey")).isBlank());
+        } catch (Exception ignored) { }
+        try {   // how this install starts today, so the startup page offers it again instead of "manual"
+            Process q = new ProcessBuilder("schtasks", "/query", "/tn", "MC.SESH", "/xml").redirectErrorStream(true).start();
+            String xml = new String(q.getInputStream().readAllBytes(), Charset.defaultCharset());
+            if (q.waitFor() == 0 && xml.toLowerCase().contains(inst.toString().toLowerCase())) out.put("startup", xml.contains("<BootTrigger") ? "boot" : xml.contains("<LogonTrigger") ? "logon" : "off");
+        } catch (Exception ignored) { }
+        return out;
     }
 
     // ---------- the install ----------
@@ -331,9 +353,9 @@ final class SetupWizard {
             if (rc != 0) throw new IOException("Setup could not finish (code " + rc + "). Read the messages above, then press Try again.");
             say("Files copied.", 62);
 
-            if (!upgrade) {
+            {   // an update stores the choices too: the pages come prefilled from the old install, so unchanged choices are written back as they were
                 Path opt = inst.resolve("data").resolve("install-options.json");
-                Files.writeString(opt, Json.stringify(Json.map("serversRoot", serversDir, "backupsRoot", backupsDir, "createDefaults", defaults)), StandardCharsets.UTF_8);
+                Files.writeString(opt, Json.stringify(Json.map("serversRoot", serversDir, "backupsRoot", backupsDir, "createDefaults", defaults, "port", port)), StandardCharsets.UTF_8);
                 Map<String, String> env = new LinkedHashMap<>();
                 env.put("MCSESH_CF_KEY", cf);
                 if (!user.isEmpty()) { env.put("MCSESH_OWNER_USER", user); env.put("MCSESH_OWNER_PASS", pass); }

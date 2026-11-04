@@ -14,7 +14,7 @@
     info: {}, installDir: 'C:\\MC.SESH', serversDir: '', backupsDir: '', backupsTouched: false, port: 8585, firewall: true, shortcuts: true, startup: 'off',
     ownerUser: '', ownerPass: '', ownerPass2: '', cfKey: '',
     d: { type: 'vanilla', maxMb: 4096, difficulty: 'easy', gamemode: 'survival', maxPlayers: 20, bedrock: false, journeymap: false, planMods: false, whitelist: false, autostart: false, lanBroadcast: true },
-    existing: false,
+    existing: false, hasCfKey: false, prefilled: '',
   };
   const LOADERS = { fabric: 'Fabric', forge: 'Forge', neoforge: 'NeoForge' };
 
@@ -45,9 +45,22 @@
       if (!r.ok) { out.className = 'drv bad'; out.textContent = r.message; return false; }
       out.className = 'drv ok';
       out.textContent = r.freeGb + ' GB free on ' + r.root + (r.existing && key === 'installDir' ? '  -  MC.SESH is already installed here: your settings and servers are kept.' : '');
-      if (key === 'installDir') S.existing = !!r.existing;
+      if (key === 'installDir') {
+        S.existing = !!r.existing;
+        if (!S.existing) S.prefilled = '';
+        else if (r.prefill && S.prefilled !== S.installDir) applyPrefill(r.prefill);
+      }
       return true;
     } catch (e) { out.className = 'drv bad'; out.textContent = e.message; return false; }
+  }
+  /** An update starts from what the old install uses (folders, port, defaults), once per install folder, so the pages offer those instead of fresh guesses. */
+  function applyPrefill(p) {
+    S.prefilled = S.installDir;
+    if (p.serversRoot) { S.serversDir = p.serversRoot; S.backupsDir = p.backupsRoot || (p.serversRoot.replace(/\\+$/, '') + '\\_backups'); S.backupsTouched = !!p.backupsRoot; }
+    if (p.port >= 1024) S.port = p.port;
+    S.hasCfKey = !!p.hasCfKey;
+    if (['off', 'logon', 'boot'].includes(p.startup)) S.startup = p.startup;
+    if (p.createDefaults && Object.keys(p.createDefaults).length) Object.assign(S.d, p.createDefaults);
   }
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
@@ -84,6 +97,8 @@
           (S.info.gateway ? '<br><br><a href="http://' + esc(S.info.gateway) + '/" target="_blank" rel="noopener"><button class="alt" type="button">Open my router\'s page (' + esc(S.info.gateway) + ')</button></a> <span class="dim">If it does not open, check the sticker on the router.</span>' : '') + '</div>' : '');
     },
     account() {
+      if (S.existing) return '<h2>Owner account</h2><p class="sub">This install already has its accounts.</p>' +
+        '<div class="note">Your owner account and everyone\'s logins are kept exactly as they are. To add people or change a password, use <b>Settings &gt; Users</b> in MC.SESH. If you are ever locked out, <b>Owner.bat</b> in the install folder resets a password.</div>';
       return '<h2>Create the owner account</h2><p class="sub">The owner is the MC.SESH administrator (OP5). Other people get their own logins from invites later.</p>' +
         '<label class="f">Username<input type="text" id="ownerUser" value="' + esc(S.ownerUser) + '" autocomplete="off" placeholder="3-32 letters, numbers, dot, dash or underscore"></label>' +
         '<div class="cols"><label class="f">Password<input type="password" id="ownerPass" value="' + esc(S.ownerPass) + '" autocomplete="new-password"></label><label class="f">Repeat password<input type="password" id="ownerPass2" value="' + esc(S.ownerPass2) + '" autocomplete="new-password"></label></div>' +
@@ -94,7 +109,8 @@
       return '<h2>CurseForge key (optional)</h2><p class="sub">Needed only to browse CurseForge modpacks. Modrinth works without a key.</p>' +
         '<label class="f">CurseForge API key<input type="password" id="cfKey" value="' + esc(S.cfKey) + '" autocomplete="off" spellcheck="false"></label>' +
         '<div class="note">Get your own free key at <a href="https://console.curseforge.com/" target="_blank" rel="noopener">console.curseforge.com</a> (sign in, then open API Keys). MC.SESH checks the key during installation. If it does not work you can enter it again later in Settings.</div>' +
-        '<button class="alt" type="button" id="cfSkip">Skip for now</button>';
+        (S.hasCfKey ? '<div class="note ok">A CurseForge key is already saved. Leave the box empty to keep it, or paste a new key to replace it.</div>' : '') +
+        '<button class="alt" type="button" id="cfSkip">' + (S.hasCfKey ? 'Keep my saved key' : 'Skip for now') + '</button>';
     },
     defaults() {
       const d = S.d, ram = S.info.ramGb || 8, mems = [2048, 4096, 6144, 8192, 12288, 16384].filter((m, i) => i === 0 || m / 1024 <= ram - 2);
@@ -127,7 +143,7 @@
       const rows = [['Install folder', S.installDir + (S.existing ? ' (existing install: settings kept)' : '')], ['Servers folder', S.serversDir], ['Backups folder', S.backupsDir],
         ['Web page port', S.port + (S.firewall ? ' (Windows Firewall rule will be added)' : ' (no firewall rule)')],
         ['Owner account', S.existing ? 'An account already exists' : S.ownerUser ? S.ownerUser + ' (administrator)' : 'Will be created when you first open MC.SESH'],
-        ['CurseForge key', S.cfKey ? 'Entered (checked during installation)' : 'Skipped (add it later in Settings)'],
+        ['CurseForge key', S.cfKey ? 'Entered (checked during installation)' : S.hasCfKey ? 'Your saved key is kept' : 'Skipped (add it later in Settings)'],
         ['Defaults', type + ', ' + d.maxMb / 1024 + ' GB, ' + d.difficulty + ', ' + d.gamemode + ', ' + d.maxPlayers + ' players'],
         ['Extras', 'Bedrock: ' + (d.bedrock ? 'yes' : 'no') + ', JourneyMap: ' + (d.journeymap ? 'yes' : 'no') + ', whitelist: ' + (d.whitelist ? 'yes' : 'no') + ', LAN worlds: ' + (d.lanBroadcast ? 'yes' : 'no')],
         ['Shortcuts / startup', (S.shortcuts ? 'shortcuts' : 'no shortcuts') + ' / ' + { off: 'manual start', logon: 'start at sign-in', boot: 'start with the PC' }[S.startup]]];
@@ -205,7 +221,7 @@
 
   function collect(id) {
     if (id === 'port') { S.port = +$('#port').value; S.firewall = $('#firewall').checked; }
-    if (id === 'account') { S.ownerUser = $('#ownerUser').value.trim(); S.ownerPass = $('#ownerPass').value; S.ownerPass2 = $('#ownerPass2').value; }
+    if (id === 'account' && !S.existing) { S.ownerUser = $('#ownerUser').value.trim(); S.ownerPass = $('#ownerPass').value; S.ownerPass2 = $('#ownerPass2').value; }
     if (id === 'cf') S.cfKey = $('#cfKey').value.trim();
     if (id === 'defaults') {
       const d = S.d;
@@ -223,7 +239,7 @@
       if (!(S.port >= 1024 && S.port <= 65535)) return 'Enter a port between 1024 and 65535.';
       return '';
     }
-    if (id === 'account') {
+    if (id === 'account' && !S.existing) {
       if (!S.ownerUser && !S.ownerPass && !S.ownerPass2) return '';
       if (!/^[A-Za-z0-9._-]{3,32}$/.test(S.ownerUser)) return 'Username must be 3-32 characters: letters, numbers, dot, dash or underscore.';
       if (S.ownerPass.length < 8) return 'The password must be at least 8 characters.';
@@ -242,11 +258,7 @@
       if (err) { $('#hint').className = 'bad'; $('#hint').textContent = err; return; }
       if (id === 'ready') return install();
     } else collect(id);
-    // an existing install keeps its folders, account, key and defaults, so those pages are skipped
-    const skip = (i) => S.existing && ['servers', 'account', 'cf', 'defaults'].includes(PAGES[i].id);
-    let n = Math.max(0, Math.min(PAGES.length - 1, idx + dir));
-    while (n > 0 && n < PAGES.length - 1 && skip(n)) n += dir;
-    show(n);
+    show(Math.max(0, Math.min(PAGES.length - 1, idx + dir)));
   }
 
   // ---------- install ----------
@@ -256,7 +268,7 @@
     try {
       await api('POST', '/api/setup/install', {
         installDir: S.installDir, serversDir: S.serversDir, backupsDir: S.backupsDir, port: S.port, firewall: S.firewall, shortcuts: S.shortcuts, startup: S.startup,
-        ownerUser: S.existing ? '' : S.ownerUser, ownerPass: S.existing ? '' : S.ownerPass, cfKey: S.existing ? '' : S.cfKey,
+        ownerUser: S.existing ? '' : S.ownerUser, ownerPass: S.existing ? '' : S.ownerPass, cfKey: S.cfKey,
         defaults: Object.assign({}, S.d, { type: effectiveType(), modLoader: ['fabric', 'forge', 'neoforge'].includes(S.d.type) ? S.d.type : 'fabric', planMods: effectiveType() === 'vanilla' ? true : S.d.planMods }),
       });
     } catch (e) { return failed(e.message); }

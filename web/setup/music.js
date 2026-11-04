@@ -38,7 +38,11 @@
   function makeGraph(c) {
     const g = {}, sr = c.sampleRate;
     g.master = c.createGain(); g.master.gain.value = 0.8;
-    const lim = c.createDynamicsCompressor(); lim.threshold.value = -9; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.003; lim.release.value = 0.12;   // a hard, fast limiter: every layer lands at full punch
+    // A fixed soft clipper, not a compressor: a compressor turns everything down while a new layer plays and back up afterwards, which sounds like the music
+    // getting quieter and the new layer fading in. A clipper never changes its gain over time, so every layer lands at full punch and the level stays put.
+    const lim = c.createWaveShaper(), curve = new Float32Array(2049);
+    for (let i = 0; i < curve.length; i++) curve[i] = Math.tanh((i / 1024 - 1) * 1.4) / Math.tanh(1.4);
+    lim.curve = curve; lim.oversample = '2x';
     g.master.connect(lim); lim.connect(c.destination);
     const len = Math.floor(sr * 1.8), ir = c.createBuffer(2, len, sr);
     for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
@@ -60,8 +64,7 @@
     g.snare = mkBuf(c, 0.3, (t, i) => { if (!i) p1 = 0; const n = Math.random() * 2 - 1, a = n - p1; p1 = n; return a * Math.exp(-t / 0.055) * 0.6 + Math.sin(2 * Math.PI * (170 + 70 * Math.exp(-t / 0.02)) * t) * Math.exp(-t / 0.05) * 0.5; });
     const hat = (decay, secs) => mkBuf(c, secs, (t, i) => { if (!i) { p1 = 0; p2 = 0; } const n = Math.random() * 2 - 1, a = n - p1; p1 = n; const b = a - p2; p2 = a; return b * Math.exp(-t / decay) * 0.45; });
     g.hatC = hat(0.012, 0.09); g.hatO = hat(0.07, 0.4); g.crash = hat(0.55, 2.4);
-    g.riser = mkBuf(c, 4 * BEAT, (t, i) => { if (!i) p1 = 0; const n = Math.random() * 2 - 1, a = n - p1; p1 = n; const x = t / (4 * BEAT); return a * x * x * 0.5; });
-    g.bb = c.createGain(); g.bb.gain.value = 1; g.bb.connect(g.master);
+    g.bb = c.createGain(); g.bb.gain.value = 0.6;   // the boom bap alone peaks near 3x full scale: it is balanced here, at the source, instead of squashing the whole mix with a compressor g.bb.connect(g.master);
     g.kickBB = mkBuf(c, 0.9, (t, i) => {
       if (!i) ph2 = 0; ph2 += 2 * Math.PI * (47 + 90 * Math.exp(-t / 0.035)) / sr;
       return Math.tanh(2.2 * Math.sin(ph2)) * Math.exp(-t / 0.28) * 0.95 + (t < 0.012 ? (Math.random() * 2 - 1) * (1 - t / 0.012) * 0.55 : 0) + Math.sin(2 * Math.PI * 1500 * t) * Math.exp(-t / 0.004) * 0.35;
@@ -103,7 +106,6 @@
     const b0 = pb * 4, b1 = b0 + 4, half = pass * 2 + (pb >= 8 ? 1 : 0);
     NOTES.forEach((n) => { if (n[0] >= b0 && n[0] < b1) pianoNote(c, g, start + n[0] * BEAT, n[2], n[1] * BEAT, n[3]); });
     const hasBA = half >= 1, hasDrums = half >= 2, boom = half >= 3;
-    if ((pass === 0 && pb === 15) || (pass === 1 && pb === 7)) hit(c, g, g.riser, start + b0 * BEAT, 1);   // build into the drums, then into the boom bap
     if (!hasBA) return;
     if ((pass >= 1 && pb === 0) || (pass === 1 && pb === 8)) hit(c, g, g.crash, start + b0 * BEAT, 0.7);
     for (let i = pb * 32; i < pb * 32 + 32; i++) {

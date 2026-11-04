@@ -24,6 +24,7 @@ final class Provision {
             Main.cfg.paths().put("backupsRoot", Path.of(backups).normalize().toString());
         }
         if (o.get("createDefaults") instanceof Map) Main.cfg.root.put("createDefaults", new LinkedHashMap<>(Json.obj(o.get("createDefaults"))));
+        if (o.get("port") instanceof Number n && n.intValue() >= 1024 && n.intValue() <= 65535) Main.cfg.root.put("port", n.intValue());
         Main.cfg.save();
         System.out.println("Folders and create-server defaults saved.");
 
