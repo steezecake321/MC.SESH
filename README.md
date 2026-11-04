@@ -36,7 +36,9 @@ MC.SESH is a small program with no dependencies to install. It brings its own Ja
 
 **Option 1: the zip (recommended).** Download `MC.SESH-<version>-win64.zip` from the [Releases](../../releases) page, unzip **the whole folder**, then double-click `Install.bat`. A setup wizard opens in your browser: pick folders, create the owner account, choose your defaults and whether MC.SESH starts with Windows. When it finishes, MC.SESH opens in the same tab. No browser? `Install-Text.bat` does the same in a plain text window. You can also just run `Start.bat` to use it without installing.
 
-**Option 2: the installer.** `MC.SESH-Setup-<version>.exe` is a classic setup wizard. It is **not code-signed yet**, so Windows SmartScreen may warn about it, and Windows with *Smart App Control* turned on can block it. If that happens, use the zip.
+**Option 2: the installer.** `MC.SESH-Setup-<version>.exe` is a classic setup wizard.
+
+> **Windows may warn about or block the installer.** MC.SESH is not code-signed yet (a signing certificate costs money, and this is a free hobby project). Because of that, Windows SmartScreen may show a "Windows protected your PC" warning, and Windows with **Smart App Control** turned on can block the `.exe` outright. **If that happens, use the zip (Option 1) instead.** It installs the same program the same way, and you do not have to turn any Windows protection off.
 
 You do **not** need to install Java. To let other devices open MC.SESH, allow it through Windows Firewall when the setup offers to.
 
@@ -64,7 +66,7 @@ The manager is a single Java program with no external libraries. Source is in `s
 
 MC.SESH is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE). In short: you may read it, run it and change it for personal, hobby, educational and charitable use at no cost. Selling it, or using it for a commercial purpose (for example, running paid servers with it), needs a separate licence from the author. To ask about one, open an issue titled **Commercial licence**.
 
-The MC.SESH name, logo and artwork are **not** covered by that licence. See [CREDITS.md](CREDITS.md).
+**The MC.SESH name, the plaque logo, the Steeze Cake profile picture and mascot, and all other artwork are NOT covered by that licence.** They are © 2026 Steeze Cake, all rights reserved, and may not be copied, reused or used to promote anything else without written permission. See [CREDITS.md](CREDITS.md). If you fork MC.SESH, replace them with your own.
 
 ## Not affiliated with Mojang or Microsoft
 

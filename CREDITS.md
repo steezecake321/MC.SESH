@@ -7,9 +7,11 @@ The source code is licensed under the PolyForm Noncommercial License 1.0.0 (see 
 Personal, hobby, educational and charitable use is free. For commercial use, contact the author (open an issue titled "Commercial licence").
 
 ## Name, logo and artwork (all rights reserved)
-The following are NOT covered by the licence above. All rights reserved. Do not reuse them, or use the MC.SESH name or logo for anything of your own, without permission.
+Copyright (c) 2026 Steeze Cake. All rights reserved.
+
+The following are NOT covered by the licence above, and no licence to them is granted. Do not copy or reuse them, or use the MC.SESH name, the logo or the Steeze Cake profile picture for anything of your own, without written permission.
 - The MC.SESH name and the plaque logo
-- The Steeze Cake mascot and name
+- The Steeze Cake profile picture, mascot and name (`brand/steeze-cake-1024.jpg` and every copy of it)
 - Everything in `brand/` (logos, mascot, icons, installer images)
 - The copies of that artwork inside the web interface and the setup wizard: `web/logo.png`, `web/banner.png`, `web/favicon-32.png`, `web/apple-touch-icon.png`, `web/icon-192.png`, `web/icon-512.png`, `web/icon.svg` and `web/setup/steeze.jpg`
 
