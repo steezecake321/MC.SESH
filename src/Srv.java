@@ -598,6 +598,8 @@ final class Srv {
                 if (!priority().equals("Normal")) applyPriority();
                 if (hasGeyser()) Geyser.reconcile(this);
                 j.log(ready ? "Server is up on port " + gamePort() + "." : "Server is listening on port " + gamePort() + " (still loading).");
+                if (Startup.helperPresent() && !Startup.gameRuleOpen(gamePort()))
+                    j.log("Note: Windows Firewall may be blocking other devices from reaching port " + gamePort() + " (no rule from the manager). If friends time out, open Settings > Network and startup and use \"Allow Minecraft servers\".");
                 return;
             }
         }

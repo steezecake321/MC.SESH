@@ -60,6 +60,25 @@ final class Startup {
         return Sys.run(8000, "netsh", "advfirewall", "firewall", "show", "rule", "name=" + names()[1]).code() == 0;
     }
 
+    static String gameRule(int port) { return "MC.SESH server " + port; }
+
+    /** True when the manager's own allow rule for this server port exists. A rule tied to one java.exe path stops working when Java is updated or moved, a port rule does not. */
+    static boolean gameRuleOpen(int port) {
+        return Sys.run(8000, "netsh", "advfirewall", "firewall", "show", "rule", "name=" + gameRule(port)).code() == 0;
+    }
+
+    /** Game ports of the managed servers with whether the manager's allow rule exists for each. */
+    static List<Object> gamePorts() {
+        List<Object> out = new ArrayList<>();
+        Set<Integer> seen = new HashSet<>();
+        for (Srv s : Main.servers) {
+            int p = s.gamePort();
+            if (p < 1024 || !seen.add(p)) continue;
+            out.add(Json.map("id", s.id, "name", s.name, "port", p, "open", gameRuleOpen(p)));
+        }
+        return out;
+    }
+
     /** What Windows itself says about the startup task: when it last ran and how that ended. Empty when there is no task. */
     static Map<String, Object> taskInfo() {
         Sys.Result r = Sys.run(10000, "schtasks", "/Query", "/TN", task(), "/V", "/FO", "LIST");
@@ -82,7 +101,7 @@ final class Startup {
 
     static Map<String, Object> status() {
         return Json.map("available", available(), "mode", available() ? mode() : "off", "elevated", elevated(), "interactive", interactive(), "user", user(), "task", task(),
-                "firewallAvailable", helperPresent(), "firewall", firewallRule(), "port", Main.cfg.port(), "taskInfo", available() ? taskInfo() : Map.of(),
+                "firewallAvailable", helperPresent(), "firewall", firewallRule(), "gamePorts", gamePorts(), "port", Main.cfg.port(), "taskInfo", available() ? taskInfo() : Map.of(),
                 "managerSince", System.currentTimeMillis() - Main.uptimeMs());
     }
 
@@ -113,7 +132,15 @@ final class Startup {
     }
 
     static void apply(Job j, String mode, boolean asSystem) throws Exception {
-        if (!List.of("off", "logon", "boot", "firewall").contains(mode)) throw new Api(400, "Unknown startup mode");
+        if (!List.of("off", "logon", "boot", "firewall", "gameFirewall").contains(mode)) throw new Api(400, "Unknown startup mode");
+        if (mode.equals("gameFirewall")) {
+            if (!helperPresent()) throw new Api(409, "The firewall helper is part of the installed version of the manager (run Setup.ps1).");
+            StringBuilder ports = new StringBuilder();
+            for (Object o : gamePorts()) ports.append(ports.length() == 0 ? "" : ",").append(Json.num(o, "port", 0));
+            if (ports.length() == 0) throw new Api(400, "No servers to open ports for.");
+            runElevated(j, "-Action", "gameFirewall", "-Ports", ports.toString());
+            return;
+        }
         if (mode.equals("firewall")) {
             if (!helperPresent()) throw new Api(409, "The firewall helper is part of the installed version of the manager (run Setup.ps1).");
             runElevated(j, "-Action", "firewall", "-Port", Integer.toString(Main.cfg.port()));

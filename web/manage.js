@@ -318,6 +318,19 @@ function startupSection() {
         h('div', { class: 'dim', style: 'font-size:12.5px' }, st.firewall ? 'Windows Firewall rule is in place: phones and other PCs on your private network can open the manager.'
           : 'Other devices may be blocked by Windows Firewall. One click adds a rule for port ' + st.port + ' on private networks (Windows asks you to approve it on the PC).'),
         h('div', { class: 'row' }, fwBtn, st.firewall ? h('span', { class: 'badge ok' }, 'allowed') : h('span', { class: 'badge' }, 'not added')));
+      const gp = st.gamePorts || [];
+      if (gp.length) {
+        const blocked = gp.filter(x => !x.open);
+        const gameBtn = h('button', { class: 'btn' + (blocked.length ? ' primary' : ''), onclick: async () => {
+          try { const r = await api('POST', '/api/startup/apply', { mode: 'gameFirewall' }); openJob(r.job, 'Allow Minecraft servers', '', { onDone: () => load() }); } catch (e) { toast(e.message, true); }
+        } }, blocked.length ? 'Allow Minecraft servers (firewall)' : 'Re-apply server rules');
+        kids.push(h('b', { style: 'margin-top:6px' }, 'Minecraft servers'),
+          h('div', { class: 'dim', style: 'font-size:12.5px' }, blocked.length
+            ? 'Windows Firewall rules that depend on one Java file stop working when Java is updated or moved, and then friends on your network time out with nothing in the console. One click opens each server\'s port for good (Windows asks you to approve it on the PC).'
+            : 'Every server port has its own rule, so a Java update will not cut players off.'),
+          h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px' }, ...gp.map(x => h('span', { class: 'badge' + (x.open ? ' ok' : '') }, x.name + ' · ' + x.port + (x.open ? ' · allowed' : ' · not added')))),
+          h('div', { class: 'row' }, gameBtn));
+      }
     }
     kids.push(h('b', { style: kids.length ? 'margin-top:6px' : '' }, 'Start with Windows'));
     if (!st.available) {

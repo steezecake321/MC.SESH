@@ -8,12 +8,14 @@ Used by the app's Settings > Startup page and by Setup.ps1 (the app starts it el
                       it goes straight to Task Scheduler and is never seen by the app)
   -Action firewall    allow the manager's port through Windows Firewall on private networks
   -Action bedrockFirewall  allow a Bedrock/Geyser UDP port (-Port) through Windows Firewall on private networks
+  -Action gameFirewall  allow the Minecraft servers' TCP game ports (-Ports '6768,6769') through Windows Firewall on private networks, whatever Java runs them
   -Action removeTask  delete other scheduled tasks by name (-Tasks 'name1|name2'), e.g. old per-server start tasks
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('off', 'logon', 'boot', 'firewall', 'bedrockFirewall', 'removeTask')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('off', 'logon', 'boot', 'firewall', 'bedrockFirewall', 'gameFirewall', 'removeTask')][string]$Action,
     [string]$InstallDir,
+    [string]$Ports = '',
     [int]$Port = 8585,
     [int]$Port2 = 0,
     [string]$User = "$env:USERDOMAIN\$env:USERNAME",
@@ -151,8 +153,18 @@ try {
             }
             Write-Result $true ($msg + '.')
         }
+        'gameFirewall' {
+            $list = @($Ports -split '[,\s]+' | Where-Object { $_ } | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1024 -and $_ -le 65535 } | Select-Object -Unique)
+            if (-not $list.Count) { throw 'No valid ports given.' }
+            foreach ($p in $list) {
+                $ruleName = "MC.SESH server $p"
+                Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+                New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Protocol TCP -LocalPort $p -Action Allow -Profile Private | Out-Null
+            }
+            Write-Result $true ("Windows Firewall now allows players on your private network to reach port" + $(if ($list.Count -gt 1) { 's' } else { '' }) + ' ' + ($list -join ', ') + '.')
+        }
         'removeTask' {
-            $names = @($Tasks -split '\|' | Where-Object { $_.Trim() })
+            $names =@($Tasks -split '\|' | Where-Object { $_.Trim() })
             if (-not $names.Count) { throw 'No task names given.' }
             foreach ($n in $names) {
                 if ($n -eq $TaskName) { throw 'Refusing to remove the manager''s own startup task here.' }
