@@ -19,7 +19,8 @@ if ($Port -le 0) {
 function Get-ManagerPids {
     $ids = New-Object System.Collections.Generic.HashSet[int]
     Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_.CommandLine -like '*mcmanager.jar*' -and $_.CommandLine -like ('*' + $InstallDir + '*')) { [void]$ids.Add([int]$_.ProcessId) }
+        # never the setup wizard itself: it runs the same jar, and a package unzipped inside the install folder has the install folder in its path too
+        if ($_.CommandLine -like '*mcmanager.jar*' -and $_.CommandLine -like ('*' + $InstallDir + '*') -and $_.CommandLine -notlike '* --setup*' -and $_.CommandLine -notlike '* --provision*') { [void]$ids.Add([int]$_.ProcessId) }
     }
     Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | ForEach-Object {
         $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue

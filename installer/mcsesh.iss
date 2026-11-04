@@ -61,7 +61,8 @@ Name: "startboot"; Description: "When the PC starts, before anyone signs in"; Gr
 
 [Files]
 ; the bundled Java: files that did not change keep their timestamp, so running servers' Java is never rewritten
-Source: "{#SourceDir}\runtime\*"; DestDir: "{app}\runtime"; Flags: recursesubdirs createallsubdirs comparetimestamp
+; and while Minecraft servers run on it (Windows locks its files) it is left exactly as it is: replacing only some of its files would break it
+Source: "{#SourceDir}\runtime\*"; DestDir: "{app}\runtime"; Flags: recursesubdirs createallsubdirs comparetimestamp; Check: RuntimeFree
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "runtime,Install.bat,Install-Text.bat,data,mcsesh.ico"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\brand\mcsesh.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\brand\installer\finish-164.bmp"; Flags: dontcopy
@@ -105,9 +106,10 @@ var
   DriveLabel, PcLabel, StartNote: TNewStaticText;
   PhoneMemo: TNewMemo;
   RouterBtn: TNewButton;
-  BackupsTouched, SettingFields, IsUpgrade, UpgradeKnown: Boolean;
-  SuggestedServers, NetIp, NetGw, NetMac: String;
-  RamGb: Integer;
+  BackupsTouched, SettingFields, IsUpgrade, UpgradeKnown, HasCfKey: Boolean;
+  AccountNote, CfNote: TNewStaticText;
+  SuggestedServers, NetIp, NetGw, NetMac, PrefillDir: String;
+  RamGb, RuntimeState: Integer;
   MemOpts: array of Integer;
 
 { ---------- small helpers ---------- }
@@ -241,7 +243,50 @@ end;
 
 function WantFirewall: Boolean;
 begin
-  Result := (not WizardSilent) and (not IsUpgrade) and ChkFirewall.Checked;
+  Result := (not WizardSilent) and ChkFirewall.Checked;
+end;
+
+{ False while a Minecraft server (or anything else) holds the bundled Java open; then the runtime is not touched. 1 = free, 2 = in use }
+function RuntimeFree: Boolean;
+var
+  rt: String;
+  rc: Integer;
+begin
+  if RuntimeState = 0 then
+  begin
+    RuntimeState := 1;
+    rt := ExpandConstant('{app}') + '\runtime';
+    if FileExists(rt + '\bin\java.exe') then
+      if Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -Command "foreach ($f in ''bin\java.exe'',''bin\extnet.dll'',''bin\server\jvm.dll'',''lib\modules'') { $p = Join-Path ''' + rt + ''' $f; if (Test-Path -LiteralPath $p) { try { $s = [IO.File]::Open($p, ''Open'', ''ReadWrite'', ''None''); $s.Close() } catch { exit 1 } } }; exit 0"',
+              '', SW_HIDE, ewWaitUntilTerminated, rc) and (rc = 1) then
+        RuntimeState := 2;
+  end;
+  Result := RuntimeState <> 2;
+end;
+
+{ one value from the key=value lines read out of the existing install's settings }
+function ExistingValue(lines: TArrayOfString; key: String): String;
+var
+  i, p: Integer;
+begin
+  Result := '';
+  for i := 0 to GetArrayLength(lines) - 1 do
+  begin
+    p := Pos('=', lines[i]);
+    if (p > 0) and (Copy(lines[i], 1, p - 1) = key) then
+    begin
+      Result := Trim(Copy(lines[i], p + 1, Length(lines[i])));
+      Exit;
+    end;
+  end;
+end;
+
+function ExistingBool(lines: TArrayOfString; key: String; def: Boolean): Boolean;
+var
+  v: String;
+begin
+  v := Lowercase(ExistingValue(lines, key));
+  if v = '' then Result := def else Result := (v = 'true');
 end;
 
 { a text label that grows to fit its words }
@@ -570,6 +615,9 @@ begin
   AccountPage.Add('Repeat the password:', True);
   ChkShowPw := Check(AccountPage.Surface, 'Show password', AccountPage.Edits[2].Top + AccountPage.Edits[2].Height + ScaleY(10), False);
   ChkShowPw.OnClick := @ShowPwClicked;
+  AccountNote := Lbl(AccountPage.Surface, 'This PC already has MC.SESH accounts. They are kept exactly as they are. To add people or change a password, use Settings > Users in MC.SESH. If you are ever locked out, Owner.bat in the install folder resets a password.',
+    ChkShowPw.Top + ChkShowPw.Height + ScaleY(16), 0, AccountPage.SurfaceWidth);
+  AccountNote.Visible := False;
 
   { CurseForge key }
   CfPage := CreateCustomPage(AccountPage.ID, 'CurseForge (optional)',
@@ -610,6 +658,9 @@ begin
   b.OnClick := @SkipCurseForge;
   y := y + ScaleY(34);
   Lbl(CfPage.Surface, 'MC.SESH checks the key during installation. If it does not work, you can enter it again later in Settings.', y, 0, CfPage.SurfaceWidth);
+  CfNote := Lbl(CfPage.Surface, 'A CurseForge key is already saved. Leave the box empty to keep it, or paste a new key to replace it.', y + ScaleY(34), 0, CfPage.SurfaceWidth);
+  CfNote.Font.Style := [fsBold];
+  CfNote.Visible := False;
 
   { defaults that pre-fill the "create server" form }
   DefaultsPage := CreateCustomPage(CfPage.ID, 'Create-server defaults',
@@ -688,21 +739,104 @@ begin
     '4.  You will also have another opportunity to open the firewall so that the Dashboard can be accessed from phones and other PCs on your local network.');
 end;
 
+{ an update starts from what the old install uses (folders, port, create-server defaults, whether a CurseForge key is saved), once per install folder }
+procedure LoadExisting(dir: String);
+var
+  script, outFile, v: String;
+  lines: TArrayOfString;
+  rc, i, mb: Integer;
+begin
+  if PrefillDir = dir then Exit;
+  PrefillDir := dir;
+  script := ExpandConstant('{tmp}\existing.ps1');
+  outFile := ExpandConstant('{tmp}\existing.txt');
+  DeleteFile(outFile);
+  SaveStringToFile(script,
+    '$c = Get-Content -Raw -LiteralPath $args[0] | ConvertFrom-Json' + #13#10 +
+    '$o = @()' + #13#10 +
+    '$o += "port=" + $c.port' + #13#10 +
+    '$o += "serversRoot=" + $c.paths.serversRoot' + #13#10 +
+    '$o += "backupsRoot=" + $c.paths.backupsRoot' + #13#10 +
+    '$d = $c.createDefaults' + #13#10 +
+    'foreach ($k in "type","maxMb","difficulty","gamemode","maxPlayers","bedrock","journeymap","planMods","whitelist","autostart","lanBroadcast") { if ($d -and $null -ne $d.$k) { $o += ($k + "=" + $d.$k) } }' + #13#10 +
+    '$o += "hasCfKey=" + [int]([bool]($c.curseforge -and $c.curseforge.apiKey))' + #13#10 +
+    'Set-Content -Encoding Default -Path $args[1] -Value $o', False);
+  if not (Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + script + '" "' + dir + '\data\config.json" "' + outFile + '"', '', SW_HIDE, ewWaitUntilTerminated, rc) and
+          LoadStringsFromFile(outFile, lines)) then Exit;
+
+  v := ExistingValue(lines, 'serversRoot');
+  if v <> '' then
+  begin
+    SettingFields := True;
+    ServersPage.Values[0] := v;
+    if ExistingValue(lines, 'backupsRoot') <> '' then
+    begin
+      ServersPage.Values[1] := ExistingValue(lines, 'backupsRoot');
+      BackupsTouched := True;
+    end
+    else ServersPage.Values[1] := AddBackslash(v) + '_backups';
+    SettingFields := False;
+  end;
+  if StrToIntDef(ExistingValue(lines, 'port'), 0) >= 1024 then PortPage.Values[0] := ExistingValue(lines, 'port');
+
+  v := Lowercase(ExistingValue(lines, 'type'));
+  if v = 'vanilla' then CbType.ItemIndex := 0
+  else if v = 'fabric' then CbType.ItemIndex := 1
+  else if v = 'forge' then CbType.ItemIndex := 2
+  else if v = 'neoforge' then CbType.ItemIndex := 3;
+  mb := StrToIntDef(ExistingValue(lines, 'maxMb'), 0);
+  if mb > 0 then
+    for i := 0 to GetArrayLength(MemOpts) - 1 do
+      if MemOpts[i] <= mb then CbMem.ItemIndex := i;
+  v := Lowercase(ExistingValue(lines, 'difficulty'));
+  if v = 'peaceful' then CbDiff.ItemIndex := 0
+  else if v = 'easy' then CbDiff.ItemIndex := 1
+  else if v = 'normal' then CbDiff.ItemIndex := 2
+  else if v = 'hard' then CbDiff.ItemIndex := 3;
+  v := Lowercase(ExistingValue(lines, 'gamemode'));
+  if v = 'survival' then CbMode.ItemIndex := 0
+  else if v = 'creative' then CbMode.ItemIndex := 1
+  else if v = 'adventure' then CbMode.ItemIndex := 2
+  else if v = 'spectator' then CbMode.ItemIndex := 3;
+  if StrToIntDef(ExistingValue(lines, 'maxPlayers'), 0) > 0 then EdPlayers.Text := ExistingValue(lines, 'maxPlayers');
+  ChkMods.Enabled := CbType.ItemIndex <> 0;
+  { setting the boxes must not run their "switch Vanilla to Fabric" handlers }
+  ChkBedrock.OnClick := nil;
+  ChkJourney.OnClick := nil;
+  ChkBedrock.Checked := ExistingBool(lines, 'bedrock', False);
+  ChkJourney.Checked := ExistingBool(lines, 'journeymap', False);
+  ChkBedrock.OnClick := @BedrockClicked;
+  ChkJourney.OnClick := @JourneyClicked;
+  ChkMods.Checked := ExistingBool(lines, 'planMods', False);
+  ChkWhitelist.Checked := ExistingBool(lines, 'whitelist', False);
+  ChkAuto.Checked := ExistingBool(lines, 'autostart', False);
+  ChkLan.Checked := ExistingBool(lines, 'lanBroadcast', True);
+  HasCfKey := ExistingValue(lines, 'hasCfKey') = '1';
+  CfNote.Visible := HasCfKey;
+end;
+
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
   if UpgradeKnown and IsUpgrade then
-    Result := (PageID = ServersPage.ID) or (PageID = PortPage.ID) or (PageID = AccountPage.ID) or (PageID = CfPage.ID) or
-              (PageID = DefaultsPage.ID) or (PageID = InfoPage.ID)
+    Result := PageID = InfoPage.ID   { every other page is shown, prefilled from the old install }
   else if PageID = AccountPage.ID then
     Result := HasAccounts(WizardDirValue + '\data');
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
+var
+  locked: Boolean;
 begin
-  if CurPageID = PortPage.ID then
+  if CurPageID = AccountPage.ID then
   begin
-    if ExistingPort <> '' then PortPage.Values[0] := ExistingPort;
+    { an install that already has accounts keeps them: the page only says so }
+    locked := IsUpgrade and HasAccounts(WizardDirValue + '\data');
+    AccountPage.Edits[0].Enabled := not locked;
+    AccountPage.Edits[1].Enabled := not locked;
+    AccountPage.Edits[2].Enabled := not locked;
+    ChkShowPw.Enabled := not locked;
+    AccountNote.Visible := locked;
   end;
 end;
 
@@ -713,7 +847,10 @@ var
 begin
   Result := True;
   if CurPageID = wpSelectDir then
+  begin
     CheckUpgrade(WizardDirValue);
+    if IsUpgrade then LoadExisting(WizardDirValue);
+  end;
   if CurPageID = ServersPage.ID then
   begin
     if Trim(ServersPage.Values[1]) = '' then
@@ -737,7 +874,7 @@ begin
       MsgBox('Please enter a port number between 1024 and 65535.', mbError, MB_OK);
       Result := False;
     end
-    else if PortInUse(p) then
+    else if (not (IsUpgrade and (IntToStr(p) = ExistingPort))) and PortInUse(p) then
       Result := MsgBox('Port ' + IntToStr(p) + ' is already in use on this PC (perhaps by another copy of MC.SESH). Use it anyway?', mbConfirmation, MB_YESNO) = IDYES;
   end;
   if CurPageID = AccountPage.ID then
@@ -777,13 +914,13 @@ end;
 
 function GetPort(Param: String): String;
 begin
-  if IsUpgrade and (ExistingPort <> '') then Result := ExistingPort
+  if IsUpgrade and WizardSilent and (ExistingPort <> '') then Result := ExistingPort
   else Result := IntToStr(StrToIntDef(Trim(PortPage.Values[0]), 8585));
 end;
 
 function GetServersDir: String;
 begin
-  if IsUpgrade then Result := AddBackslash(ExpandConstant('{app}')) + 'servers'
+  if IsUpgrade and WizardSilent then Result := AddBackslash(ExpandConstant('{app}')) + 'servers'
   else Result := RemoveBackslashUnlessRoot(Trim(ServersPage.Values[0]));
 end;
 
@@ -803,6 +940,13 @@ begin
   if (ChkBedrock.Checked or ChkJourney.Checked) and (Result = 'vanilla') then Result := 'fabric';
 end;
 
+{ the mod loader behind the chosen type (Fabric when Vanilla is chosen, as the browser installer does) }
+function ModLoaderId: String;
+begin
+  Result := TypeIdFinal;
+  if Result = 'vanilla' then Result := 'fabric';
+end;
+
 function MemMb: Integer;
 begin
   Result := 4096;
@@ -818,7 +962,8 @@ function OptionsJson: String;
 begin
   Result := '{"serversRoot":"' + JsonEsc(RemoveBackslashUnlessRoot(Trim(ServersPage.Values[0]))) + '",' +
     '"backupsRoot":"' + JsonEsc(RemoveBackslashUnlessRoot(Trim(ServersPage.Values[1]))) + '",' +
-    '"createDefaults":{"type":"' + TypeIdFinal + '","bedrock":' + BoolText(ChkBedrock.Checked) + ',"journeymap":' + BoolText(ChkJourney.Checked) + ',"planMods":' + BoolText(ChkMods.Checked or (TypeIdFinal = 'vanilla')) +
+    '"port":' + IntToStr(StrToIntDef(Trim(PortPage.Values[0]), 8585)) + ',' +
+    '"createDefaults":{"type":"' + TypeIdFinal + '","modLoader":"' + ModLoaderId + '","bedrock":' + BoolText(ChkBedrock.Checked) + ',"journeymap":' + BoolText(ChkJourney.Checked) + ',"planMods":' + BoolText(ChkMods.Checked or (TypeIdFinal = 'vanilla')) +
     ',"difficulty":"' + ChoiceId(CbDiff) + '","gamemode":"' + ChoiceId(CbMode) + '","maxPlayers":' + IntToStr(StrToIntDef(Trim(EdPlayers.Text), 20)) +
     ',"whitelist":' + BoolText(ChkWhitelist.Checked) + ',"autostart":' + BoolText(ChkAuto.Checked) + ',"lanBroadcast":' + BoolText(ChkLan.Checked) + ',"maxMb":' + IntToStr(MemMb) + '}}';
 end;
@@ -833,7 +978,8 @@ begin
   { 1. the settings file (port, bind, servers folder) }
   Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + app + '\Setup.ps1" -Silent -NoLaunch -InstallDir "' + app + '" -ServersDir "' +
        GetServersDir + '" -Port ' + GetPort(''), app, SW_HIDE, ewWaitUntilTerminated, rc);
-  if IsUpgrade then Exit;
+  { a silent update has no pages to take choices from, so it keeps the old ones as they are }
+  if IsUpgrade and WizardSilent then Exit;
 
   { 2. folders, create-server defaults, CurseForge key and owner account (secrets travel as environment variables of this one process) }
   opt := app + '\data\install-options.json';
@@ -868,7 +1014,6 @@ var
   s, owner, cf, fw: String;
 begin
   s := MemoDirInfo;
-  if not IsUpgrade then
   begin
     s := s + NewLine + NewLine + 'Servers folder:' + NewLine + Space + Trim(ServersPage.Values[0]);
     s := s + NewLine + NewLine + 'Backups folder:' + NewLine + Space + Trim(ServersPage.Values[1]);
@@ -878,7 +1023,9 @@ begin
     else if Trim(AccountPage.Values[0]) <> '' then owner := Trim(AccountPage.Values[0]) + ' (administrator)'
     else owner := 'Will be created when you first open MC.SESH';
     s := s + NewLine + NewLine + 'Owner account:' + NewLine + Space + owner;
-    if Trim(CfEdit.Text) <> '' then cf := 'Entered (checked during installation)' else cf := 'Skipped (add it later in Settings)';
+    if Trim(CfEdit.Text) <> '' then cf := 'Entered (checked during installation)'
+    else if HasCfKey then cf := 'Your saved key is kept'
+    else cf := 'Skipped (add it later in Settings)';
     s := s + NewLine + NewLine + 'CurseForge key:' + NewLine + Space + cf;
     s := s + NewLine + NewLine + 'Create-server defaults:' + NewLine + Space + TypeIdFinal + ', ' + IntToStr(MemMb div 1024) + ' GB, ' + ChoiceId(CbDiff) + ', ' + ChoiceId(CbMode) + ', ' +
       Trim(EdPlayers.Text) + ' players' + NewLine + Space + 'Bedrock: ' + BoolText(ChkBedrock.Checked) + ', JourneyMap: ' + BoolText(ChkJourney.Checked) + ', whitelist: ' + BoolText(ChkWhitelist.Checked);
